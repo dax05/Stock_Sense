@@ -1,76 +1,193 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Trash2, AlertTriangle, Printer, Loader2, CheckCircle2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import StatusBadge from "../ui/StatusBadge";
 import api from "../../lib/api";
 
-const EMPTY_LINE = { product_id: "", qty: 1, source_location_id: "", dest_location_id: "" };
+const EMPTY_LINE = { product_id: "", qty: 1, warehouse_id: "", location_id: "" };
 
-export default function OperationForm({ operation, products, opType, onSaved, onClose }) {
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * For a given operation type, which location types are valid sources?
+ * IN  → source must be Vendor (virtual)
+ * OUT → source must be Internal
+ * INT → source must be Internal
+ * ADJ → source must be Internal
+ */
+function isValidSourceLocation(loc, opType) {
+    if (opType === "IN") return loc.location_type === "Vendor";
+    return loc.location_type === "Internal";
+}
+
+/**
+ * For a given operation type, which location types are valid destinations?
+ * IN  → dest must be Internal
+ * OUT → dest must be Customer (virtual)
+ * INT → dest must be Internal
+ * ADJ → dest must be Adjustment (virtual)
+ */
+function isValidDestLocation(loc, opType) {
+    if (opType === "IN") return loc.location_type === "Internal";
+    if (opType === "OUT") return loc.location_type === "Customer";
+    if (opType === "INT") return loc.location_type === "Internal";
+    if (opType === "ADJ") return loc.location_type === "Adjustment";
+    return false;
+}
+
+/**
+ * For IN / OUT operations, one side is a fixed virtual location (Vendor / Customer).
+ * Returns the fixed virtual location for that side, or null if the side is user-selectable.
+ */
+function getFixedSourceLocation(locations, opType) {
+    if (opType === "IN") return locations.find((l) => l.location_type === "Vendor") || null;
+    return null; // OUT / INT / ADJ: source is user-selectable (internal)
+}
+
+function getFixedDestLocation(locations, opType) {
+    if (opType === "OUT") return locations.find((l) => l.location_type === "Customer") || null;
+    if (opType === "ADJ") return locations.find((l) => l.location_type === "Adjustment") || null;
+    return null; // IN / INT: destination is user-selectable (internal)
+}
+
+// ── Main Component ────────────────────────────────────────────────────────
+
+export default function OperationForm({ operation, products, opType, locations, warehouses, onSaved, onClose }) {
     const isNew = !operation;
+
+    // Derive the virtual (fixed) locations for this operation type
+    const fixedSrc = getFixedSourceLocation(locations, opType);
+    const fixedDst = getFixedDestLocation(locations, opType);
+
+    // Internal locations grouped by warehouse for user selection
+    const internalLocations = locations.filter((l) => l.location_type === "Internal");
+
     const [form, setForm] = useState({
         partner_name: operation?.partner_name || "",
         scheduled_date: operation?.scheduled_date?.slice(0, 10) || "",
-        warehouse_id: 1, // default warehouse
+        warehouse_id: "",   // selected warehouse for the whole operation
     });
-    const [lines, setLines] = useState(
-        operation?.stock_moves?.length
-            ? operation.stock_moves.map((m) => ({
-                product_id: m.product_id,
-                qty: m.qty,
-                source_location_id: m.source_location_id,
-                dest_location_id: m.dest_location_id,
-            }))
-            : [{ ...EMPTY_LINE }]
-    );
+
+    // Each line: { product_id, qty, location_id }
+    // location_id is the user-chosen internal location (source for OUT/INT/ADJ, dest for IN)
+    const [lines, setLines] = useState(() => {
+        if (operation?.stock_moves?.length) {
+            return operation.stock_moves.map((m) => {
+                // Determine which side is user-selectable
+                const userSideLocationId = opType === "IN" ? m.dest_location_id : m.source_location_id;
+                const userLoc = locations.find((l) => l.id === userSideLocationId);
+                return {
+                    product_id: m.product_id,
+                    qty: m.qty,
+                    warehouse_id: userLoc?.warehouse_id ? String(userLoc.warehouse_id) : "",
+                    location_id: String(userSideLocationId),
+                };
+            });
+        }
+        return [{ ...EMPTY_LINE }];
+    });
+
     const [saving, setSaving] = useState(false);
     const [validating, setValidating] = useState(false);
     const [error, setError] = useState("");
 
-    // Default locations per type (IDs match seeded data)
-    const defaultSrc = opType === "IN" ? 1 : 3;  // 1=WH/Stock, 3=Virtual/Vendor
-    const defaultDst = opType === "OUT" ? 2 : 3;  // 2=Virtual/Customer, 3=WH/Stock
+    // Auto-select warehouse if only one exists
+    useEffect(() => {
+        if (warehouses.length === 1 && !form.warehouse_id) {
+            setForm((f) => ({ ...f, warehouse_id: String(warehouses[0].id) }));
+        }
+    }, [warehouses]);
 
+    // ── Line helpers ──────────────────────────────────────────────────────
     function addLine() {
-        setLines([...lines, { ...EMPTY_LINE, source_location_id: defaultSrc, dest_location_id: defaultDst }]);
+        setLines([...lines, { ...EMPTY_LINE, warehouse_id: form.warehouse_id }]);
     }
-
     function removeLine(i) {
         setLines(lines.filter((_, idx) => idx !== i));
     }
-
     function updateLine(i, key, val) {
-        setLines(lines.map((l, idx) => idx === i ? { ...l, [key]: val } : l));
+        setLines(lines.map((l, idx) => {
+            if (idx !== i) return l;
+            const updated = { ...l, [key]: val };
+            // Reset location when warehouse changes
+            if (key === "warehouse_id") updated.location_id = "";
+            return updated;
+        }));
     }
-
     function getProduct(id) {
         return products.find((p) => p.id === Number(id));
     }
-
     function isOutOfStock(line) {
         if (opType !== "OUT") return false;
         const p = getProduct(line.product_id);
         return p && p.free_to_use < Number(line.qty);
     }
 
-    async function handleSave() {
-        if (!form.partner_name.trim()) { setError("Contact / partner name is required"); return; }
-        if (lines.some((l) => !l.product_id || !l.qty)) { setError("All product lines must be filled"); return; }
-        setError(""); setSaving(true);
-        try {
-            const payload = {
-                warehouse_id: form.warehouse_id,
-                type: opType,
-                partner_name: form.partner_name,
-                scheduled_date: form.scheduled_date ? new Date(form.scheduled_date).toISOString() : null,
-                moves: lines.map((l) => ({
+    // Locations available for a specific line (filtered by warehouse + valid type)
+    function getSelectableLocations(line) {
+        const wid = Number(line.warehouse_id);
+        return internalLocations.filter((l) => l.warehouse_id === wid);
+    }
+
+    // ── Build the API payload ─────────────────────────────────────────────
+    function buildPayload() {
+        const whId = Number(form.warehouse_id);
+        const moves = lines.map((l) => {
+            const locationId = Number(l.location_id);
+            if (opType === "IN") {
+                return {
                     product_id: Number(l.product_id),
                     qty: Number(l.qty),
-                    source_location_id: Number(l.source_location_id) || defaultSrc,
-                    dest_location_id: Number(l.dest_location_id) || defaultDst,
-                })),
+                    source_location_id: fixedSrc?.id,    // Virtual/Vendor
+                    dest_location_id: locationId,          // user-chosen internal location
+                };
+            }
+            if (opType === "OUT") {
+                return {
+                    product_id: Number(l.product_id),
+                    qty: Number(l.qty),
+                    source_location_id: locationId,        // user-chosen internal location
+                    dest_location_id: fixedDst?.id,        // Virtual/Customer
+                };
+            }
+            // INT handled by TransfersPage, but kept here for completeness
+            return {
+                product_id: Number(l.product_id),
+                qty: Number(l.qty),
+                source_location_id: locationId,
+                dest_location_id: Number(l.dest_location_id || 0),
             };
-            const { data } = await api.post("/operations/", payload);
+        });
+        return {
+            warehouse_id: whId,
+            type: opType,
+            partner_name: form.partner_name || null,
+            scheduled_date: form.scheduled_date ? new Date(form.scheduled_date).toISOString() : null,
+            moves,
+        };
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────
+    function validateForm() {
+        if (!form.partner_name.trim()) return "Contact / partner name is required";
+        if (!form.warehouse_id) return "Please select a warehouse";
+        for (const l of lines) {
+            if (!l.product_id) return "All product lines must have a product selected";
+            if (!l.qty || Number(l.qty) <= 0) return "All quantities must be greater than 0";
+            if (!l.location_id) return "Please select a location for every product line";
+        }
+        if (!fixedSrc && opType !== "INT") return "No virtual source location found (Virtual/Vendor)";
+        if (!fixedDst && (opType === "OUT" || opType === "ADJ")) return "No virtual destination location found";
+        return null;
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────
+    async function handleSave() {
+        const err = validateForm();
+        if (err) { setError(err); return; }
+        setError(""); setSaving(true);
+        try {
+            const { data } = await api.post("/operations/", buildPayload());
             onSaved(data);
         } catch (e) {
             setError(e.response?.data?.detail || "Failed to save operation");
@@ -109,6 +226,10 @@ export default function OperationForm({ operation, products, opType, onSaved, on
     const isDraft = operation?.status === "Draft" || isNew;
     const isWaiting = operation?.status === "Waiting";
 
+    // Labels per operation type
+    const locationLabel = opType === "IN" ? "Destination Location" : "Source Location";
+    const partnerLabel = opType === "IN" ? "Receive From" : "Deliver To";
+
     return (
         <div className="space-y-5">
             {/* Reference + Status */}
@@ -127,12 +248,10 @@ export default function OperationForm({ operation, products, opType, onSaved, on
                 </div>
             )}
 
-            {/* Fields */}
+            {/* Header fields */}
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                        {opType === "IN" ? "Receive From" : "Deliver To"}
-                    </label>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">{partnerLabel}</label>
                     <input
                         className="input-field"
                         placeholder="Vendor / Customer name"
@@ -151,7 +270,45 @@ export default function OperationForm({ operation, products, opType, onSaved, on
                         onChange={(e) => setForm({ ...form, scheduled_date: e.target.value })}
                     />
                 </div>
+
+                {/* Warehouse selector for the whole operation */}
+                {isNew && (
+                    <div className="col-span-2">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Warehouse</label>
+                        <select
+                            className="input-field"
+                            value={form.warehouse_id}
+                            onChange={(e) => {
+                                const newWh = e.target.value;
+                                setForm({ ...form, warehouse_id: newWh });
+                                // Reset all line locations when warehouse changes
+                                setLines(lines.map((l) => ({ ...l, warehouse_id: newWh, location_id: "" })));
+                            }}
+                        >
+                            <option value="">— Select warehouse —</option>
+                            {warehouses.map((wh) => (
+                                <option key={wh.id} value={wh.id}>{wh.name} ({wh.short_code})</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
             </div>
+
+            {/* Virtual location info banner */}
+            {opType === "IN" && fixedSrc && (
+                <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="font-medium">Source:</span>{" "}
+                    <span className="font-mono">{fixedSrc.name}</span>
+                    {" → "}<span className="font-medium">Destination:</span> selected warehouse location below
+                </div>
+            )}
+            {opType === "OUT" && fixedDst && (
+                <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="font-medium">Source:</span> selected warehouse location below
+                    {" → "}<span className="font-medium">Destination:</span>{" "}
+                    <span className="font-mono">{fixedDst.name}</span>
+                </div>
+            )}
 
             {/* Product lines */}
             <div>
@@ -171,6 +328,7 @@ export default function OperationForm({ operation, products, opType, onSaved, on
                                 <th className="text-left px-3 py-2 text-xs font-semibold text-slate-500">Product</th>
                                 <th className="text-left px-3 py-2 text-xs font-semibold text-slate-500 w-24">Qty</th>
                                 <th className="text-left px-3 py-2 text-xs font-semibold text-slate-500 w-24">On Hand</th>
+                                <th className="text-left px-3 py-2 text-xs font-semibold text-slate-500">{locationLabel}</th>
                                 {!isDone && <th className="w-10" />}
                             </tr>
                         </thead>
@@ -178,6 +336,8 @@ export default function OperationForm({ operation, products, opType, onSaved, on
                             {lines.map((line, i) => {
                                 const prod = getProduct(line.product_id);
                                 const oos = isOutOfStock(line);
+                                const selectableLocs = getSelectableLocations(line);
+
                                 return (
                                     <tr key={i} className={cn("border-b border-slate-100 last:border-0", oos && "bg-red-50")}>
                                         <td className="px-3 py-2">
@@ -215,6 +375,46 @@ export default function OperationForm({ operation, products, opType, onSaved, on
                                                     {prod.free_to_use} {prod.uom}
                                                 </span>
                                             ) : "—"}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                            {isDone ? (
+                                                <span className="text-xs text-slate-500">
+                                                    {locations.find((l) => {
+                                                        const m = operation?.stock_moves?.[i];
+                                                        return l.id === (opType === "IN" ? m?.dest_location_id : m?.source_location_id);
+                                                    })?.name || "—"}
+                                                </span>
+                                            ) : (
+                                                <div className="flex flex-col gap-1">
+                                                    {/* Per-line warehouse override (only shown when no global warehouse selected) */}
+                                                    {!form.warehouse_id && (
+                                                        <select
+                                                            className="input-field py-1 text-xs"
+                                                            value={line.warehouse_id}
+                                                            onChange={(e) => updateLine(i, "warehouse_id", e.target.value)}
+                                                        >
+                                                            <option value="">— Warehouse —</option>
+                                                            {warehouses.map((wh) => (
+                                                                <option key={wh.id} value={wh.id}>{wh.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    )}
+                                                    <select
+                                                        className="input-field py-1"
+                                                        value={line.location_id}
+                                                        disabled={!line.warehouse_id && !form.warehouse_id}
+                                                        onChange={(e) => updateLine(i, "location_id", e.target.value)}
+                                                    >
+                                                        <option value="">— Location —</option>
+                                                        {selectableLocs.map((l) => (
+                                                            <option key={l.id} value={l.id}>{l.name}</option>
+                                                        ))}
+                                                    </select>
+                                                    {(line.warehouse_id || form.warehouse_id) && selectableLocs.length === 0 && (
+                                                        <p className="text-xs text-amber-500">No internal locations in this warehouse</p>
+                                                    )}
+                                                </div>
+                                            )}
                                         </td>
                                         {!isDone && (
                                             <td className="px-2 py-2">

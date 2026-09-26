@@ -5,7 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.models.user import User
 from app.models.operation import Operation, OperationStatus, OperationType, StockMove
-from app.models.warehouse import Location
+from app.models.warehouse import Location, Warehouse, LocationType
 from app.schemas.operation import OperationCreate, OperationOut
 from app.services.auth import get_current_user
 from app.services.reference import generate_reference
@@ -35,17 +35,110 @@ def create_operation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Validate warehouse exists
+    warehouse = db.query(Warehouse).filter(Warehouse.id == payload.warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Warehouse with ID {payload.warehouse_id} not found",
+        )
+
     # Validate all locations exist before touching the DB
     location_ids = set()
     for move in payload.moves:
         location_ids.add(move.source_location_id)
         location_ids.add(move.dest_location_id)
 
-    found = db.query(Location.id).filter(Location.id.in_(location_ids)).all()
-    found_ids = {row.id for row in found}
-    missing = location_ids - found_ids
+    locations_map: dict[int, Location] = {
+        loc.id: loc
+        for loc in db.query(Location).filter(Location.id.in_(location_ids)).all()
+    }
+    missing = location_ids - set(locations_map.keys())
     if missing:
         raise HTTPException(status_code=400, detail=f"Location IDs not found: {missing}")
+
+    # Per-move validations
+    for i, move_data in enumerate(payload.moves):
+        src_loc = locations_map[move_data.source_location_id]
+        dst_loc = locations_map[move_data.dest_location_id]
+
+        # Same-location check (critical for internal transfers)
+        if move_data.source_location_id == move_data.dest_location_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Move {i + 1}: Source and destination location cannot be the same "
+                    f"(location ID {move_data.source_location_id})."
+                ),
+            )
+
+        # For Receipts (IN): source must be a virtual/vendor location
+        if payload.type == OperationType.IN:
+            if src_loc.location_type == LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Receipt source must be a Vendor/Virtual location, "
+                        f"not an Internal one ('{src_loc.name}')."
+                    ),
+                )
+            if dst_loc.location_type != LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Receipt destination must be an Internal warehouse location, "
+                        f"got '{dst_loc.location_type.value}' ('{dst_loc.name}')."
+                    ),
+                )
+
+        # For Deliveries (OUT): source must be internal, destination must be non-internal
+        if payload.type == OperationType.OUT:
+            if src_loc.location_type != LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Delivery source must be an Internal warehouse location, "
+                        f"got '{src_loc.location_type.value}' ('{src_loc.name}')."
+                    ),
+                )
+            if dst_loc.location_type == LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Delivery destination must be a Customer/Virtual location, "
+                        f"not an Internal one ('{dst_loc.name}')."
+                    ),
+                )
+
+        # For Internal Transfers (INT): both locations must be internal
+        if payload.type == OperationType.INT:
+            if src_loc.location_type != LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Internal transfer source must be an Internal location, "
+                        f"got '{src_loc.location_type.value}' ('{src_loc.name}')."
+                    ),
+                )
+            if dst_loc.location_type != LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Internal transfer destination must be an Internal location, "
+                        f"got '{dst_loc.location_type.value}' ('{dst_loc.name}')."
+                    ),
+                )
+
+        # For Adjustments (ADJ): source must be internal, dest must be Adjustment type
+        if payload.type == OperationType.ADJ:
+            if src_loc.location_type != LocationType.internal:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Move {i + 1}: Adjustment source must be an Internal warehouse location, "
+                        f"got '{src_loc.location_type.value}' ('{src_loc.name}')."
+                    ),
+                )
 
     reference = generate_reference(db, payload.warehouse_id, payload.type)
 

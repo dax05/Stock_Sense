@@ -24,9 +24,9 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(stats.router)
 app.include_router(operations.router)
 app.include_router(products.router)
-app.include_router(stats.router)
 app.include_router(warehouses.router)
 app.include_router(stock_moves.router)
 app.include_router(categories.router)

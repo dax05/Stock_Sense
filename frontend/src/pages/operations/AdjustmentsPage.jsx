@@ -1,24 +1,14 @@
 import { useState, useEffect } from "react";
 import { Plus, Search, Trash2, Loader2, AlertTriangle, CheckCircle2, SlidersHorizontal } from "lucide-react";
-import { cn } from "../../lib/utils";
 import StatusBadge from "../../components/ui/StatusBadge";
 import Modal from "../../components/ui/Modal";
 import api from "../../lib/api";
-
-const DEMO_PRODUCTS = [
-    { id: 1, sku: "SKU-001", name: "Widget A", uom: "Units", on_hand: 50 },
-    { id: 2, sku: "SKU-002", name: "Gadget B", uom: "Units", on_hand: 0 },
-    { id: 3, sku: "SKU-003", name: "Part C", uom: "kg", on_hand: 20 },
-];
-const DEMO_ADJ = [
-    { id: 1, reference: "WH/ADJ/0001", status: "Done", partner_name: "Damaged goods", scheduled_date: "2026-03-10T00:00:00Z", stock_moves: [] },
-    { id: 2, reference: "WH/ADJ/0002", status: "Draft", partner_name: "Cycle count fix", scheduled_date: "2026-03-14T00:00:00Z", stock_moves: [] },
-];
 
 export default function AdjustmentsPage() {
     const [adjustments, setAdjustments] = useState([]);
     const [products, setProducts] = useState([]);
     const [locations, setLocations] = useState([]);
+    const [warehouses, setWarehouses] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [modal, setModal] = useState(false);
@@ -26,6 +16,8 @@ export default function AdjustmentsPage() {
     // Form state
     const [reason, setReason] = useState("");
     const [date, setDate] = useState("");
+    const [warehouseId, setWarehouseId] = useState("");
+    const [sourceLocationId, setSourceLocationId] = useState("");
     const [lines, setLines] = useState([{ product_id: "", qty: 1 }]);
     const [error, setError] = useState("");
     const [saving, setSaving] = useState(false);
@@ -35,42 +27,77 @@ export default function AdjustmentsPage() {
             api.get("/operations/?type=ADJ"),
             api.get("/products/"),
             api.get("/locations/"),
+            api.get("/warehouses/"),
         ])
-            .then(([a, p, l]) => { setAdjustments(a.data); setProducts(p.data); setLocations(l.data); })
-            .catch(() => { setAdjustments(DEMO_ADJ); setProducts(DEMO_PRODUCTS); setLocations([]); })
+            .then(([a, p, l, w]) => {
+                setAdjustments(a.data);
+                setProducts(p.data);
+                setLocations(l.data);
+                setWarehouses(w.data);
+                // Auto-select if only one warehouse
+                if (w.data.length === 1) setWarehouseId(String(w.data[0].id));
+            })
+            .catch(() => {
+                setAdjustments([]);
+                setProducts([]);
+                setLocations([]);
+                setWarehouses([]);
+            })
             .finally(() => setLoading(false));
     }
     useEffect(load, []);
 
-    // Find the Virtual/Adjustment and a default internal location
-    const adjLocation = locations.find((l) => l.location_type === "Adjustment") || { id: 5 };
-    const stockLocation = locations.find((l) => l.location_type === "Internal") || { id: 1 };
+    // Virtual Adjustment location (no warehouse_id)
+    const adjLocation = locations.find((l) => l.location_type === "Adjustment");
+
+    // Internal locations for the selected warehouse
+    const internalLocations = locations.filter(
+        (l) => l.location_type === "Internal" && l.warehouse_id === Number(warehouseId)
+    );
+
+    // Reset source location when warehouse changes
+    function handleWarehouseChange(wid) {
+        setWarehouseId(wid);
+        setSourceLocationId("");
+    }
 
     function addLine() { setLines([...lines, { product_id: "", qty: 1 }]); }
     function removeLine(i) { setLines(lines.filter((_, idx) => idx !== i)); }
     function updateLine(i, k, v) { setLines(lines.map((l, idx) => idx === i ? { ...l, [k]: v } : l)); }
 
+    function resetForm() {
+        setReason("");
+        setDate("");
+        setSourceLocationId("");
+        setLines([{ product_id: "", qty: 1 }]);
+        setError("");
+        // Keep warehouse selection if only one warehouse
+        if (warehouses.length !== 1) setWarehouseId("");
+    }
+
     async function handleSave() {
         if (!reason.trim()) { setError("Reason / note is required"); return; }
+        if (!warehouseId) { setError("Please select a warehouse"); return; }
+        if (!sourceLocationId) { setError("Please select the source (stock) location"); return; }
+        if (!adjLocation) { setError("Virtual/Adjustment location not found. Please contact your administrator."); return; }
         if (lines.some((l) => !l.product_id || !l.qty)) { setError("All lines must have a product and quantity"); return; }
         setError(""); setSaving(true);
         try {
-            // ADJ: source = WH/Stock (Internal), dest = Virtual/Adjustment
             const payload = {
-                warehouse_id: 1,
+                warehouse_id: Number(warehouseId),
                 type: "ADJ",
                 partner_name: reason,
                 scheduled_date: date ? new Date(date).toISOString() : null,
                 moves: lines.map((l) => ({
                     product_id: Number(l.product_id),
                     qty: Number(l.qty),
-                    source_location_id: stockLocation.id,
+                    source_location_id: Number(sourceLocationId),
                     dest_location_id: adjLocation.id,
                 })),
             };
             await api.post("/operations/", payload);
             setModal(false);
-            setReason(""); setDate(""); setLines([{ product_id: "", qty: 1 }]);
+            resetForm();
             load();
         } catch (e) {
             setError(e.response?.data?.detail || "Failed to create adjustment");
@@ -84,6 +111,8 @@ export default function AdjustmentsPage() {
         return a.reference?.toLowerCase().includes(q) || a.partner_name?.toLowerCase().includes(q);
     });
 
+    const locMap = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+
     return (
         <div className="space-y-4">
             {/* Header */}
@@ -92,7 +121,7 @@ export default function AdjustmentsPage() {
                     <h1 className="text-xl font-bold text-slate-800">Stock Adjustments</h1>
                     <p className="text-sm text-slate-500 mt-0.5">Correct discrepancies between physical and system stock</p>
                 </div>
-                <button onClick={() => { setError(""); setModal(true); }} className="btn-primary">
+                <button onClick={() => { resetForm(); setModal(true); }} className="btn-primary">
                     <Plus size={14} /> New Adjustment
                 </button>
             </div>
@@ -100,7 +129,7 @@ export default function AdjustmentsPage() {
             {/* Info banner */}
             <div className="alert-warning">
                 <SlidersHorizontal size={15} className="mt-0.5 shrink-0" />
-                <span>Adjustments move stock from <span className="font-mono font-semibold">WH/Stock → Virtual/Adjustment</span>. They reduce on-hand quantities and are fully logged in the ledger.</span>
+                <span>Adjustments move stock from a selected internal location to <span className="font-mono font-semibold">Virtual/Adjustment</span>. They reduce on-hand quantities and are fully logged in the ledger.</span>
             </div>
 
             {/* Search */}
@@ -125,16 +154,19 @@ export default function AdjustmentsPage() {
                         <tbody>
                             {filtered.length === 0 ? (
                                 <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No adjustments found</td></tr>
-                            ) : filtered.map((a) => (
-                                <tr key={a.id}>
-                                    <td className="font-mono text-xs font-semibold text-amber-600">{a.reference}</td>
-                                    <td>{a.partner_name || "—"}</td>
-                                    <td className="text-xs">WH/Stock</td>
-                                    <td className="text-xs">Virtual/Adjustment</td>
-                                    <td className="text-slate-500">{formatDate(a.scheduled_date)}</td>
-                                    <td><StatusBadge status={a.status} /></td>
-                                </tr>
-                            ))}
+                            ) : filtered.map((a) => {
+                                const firstMove = a.stock_moves?.[0];
+                                return (
+                                    <tr key={a.id}>
+                                        <td className="font-mono text-xs font-semibold text-amber-600">{a.reference}</td>
+                                        <td>{a.partner_name || "—"}</td>
+                                        <td className="text-xs">{firstMove ? (locMap[firstMove.source_location_id] || `Loc #${firstMove.source_location_id}`) : "—"}</td>
+                                        <td className="text-xs">{firstMove ? (locMap[firstMove.dest_location_id] || "Virtual/Adjustment") : "—"}</td>
+                                        <td className="text-slate-500">{formatDate(a.scheduled_date)}</td>
+                                        <td><StatusBadge status={a.status} /></td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
@@ -158,15 +190,41 @@ export default function AdjustmentsPage() {
                             <label className="block text-xs font-medium text-slate-600 mb-1">Date (optional)</label>
                             <input type="date" className="input-field" value={date} onChange={(e) => setDate(e.target.value)} />
                         </div>
-                        <div className="flex items-end gap-2">
-                            <div className="flex-1">
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Source</label>
-                                <input className="input-field bg-slate-50 text-slate-500" value="WH/Stock (Internal)" readOnly />
-                            </div>
-                            <div className="flex-1">
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Destination</label>
-                                <input className="input-field bg-slate-50 text-slate-500" value="Virtual/Adjustment" readOnly />
-                            </div>
+
+                        {/* Warehouse */}
+                        <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Warehouse</label>
+                            <select className="input-field" value={warehouseId} onChange={(e) => handleWarehouseChange(e.target.value)}>
+                                <option value="">— Select warehouse —</option>
+                                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name} ({w.short_code})</option>)}
+                            </select>
+                        </div>
+
+                        {/* Source location within the selected warehouse */}
+                        <div className="col-span-2">
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Source Location (where stock is removed from)</label>
+                            <select
+                                className="input-field"
+                                value={sourceLocationId}
+                                disabled={!warehouseId}
+                                onChange={(e) => setSourceLocationId(e.target.value)}
+                            >
+                                <option value="">— Select source location —</option>
+                                {internalLocations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                            </select>
+                            {warehouseId && internalLocations.length === 0 && (
+                                <p className="text-xs text-amber-600 mt-1">⚠ No internal locations in this warehouse.</p>
+                            )}
+                        </div>
+
+                        {/* Destination is always Virtual/Adjustment */}
+                        <div className="col-span-2">
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Destination</label>
+                            <input
+                                className="input-field bg-slate-50 text-slate-500"
+                                value={adjLocation ? adjLocation.name : "Virtual/Adjustment (not seeded yet)"}
+                                readOnly
+                            />
                         </div>
                     </div>
 

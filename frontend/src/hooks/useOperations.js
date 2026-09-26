@@ -29,6 +29,34 @@ export function useProducts() {
     return products;
 }
 
+export function useLocations() {
+    const [locations, setLocations] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        api.get("/locations/")
+            .then(({ data }) => setLocations(data))
+            .catch(() => setLocations([]))
+            .finally(() => setLoading(false));
+    }, []);
+
+    return { locations, loading };
+}
+
+export function useWarehouses() {
+    const [warehouses, setWarehouses] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        api.get("/warehouses/")
+            .then(({ data }) => setWarehouses(data))
+            .catch(() => setWarehouses([]))
+            .finally(() => setLoading(false));
+    }, []);
+
+    return { warehouses, loading };
+}
+
 // ── Demo data (used when backend is offline) ──────────────────────────────
 
 const DEMO_PRODUCTS = [

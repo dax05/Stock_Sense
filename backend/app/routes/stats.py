@@ -13,17 +13,29 @@ from app.services.auth import get_current_user
 router = APIRouter(prefix="/operations", tags=["stats"])
 
 
-def _count(db, op_type, status, warehouse_id=None, date_from=None, date_to=None):
-    query = (
-        db.query(func.count(Operation.id))
-        .filter(Operation.type == op_type, Operation.status == status)
-    )
-    
+def _apply_warehouse_filter(query, warehouse_id):
     if warehouse_id:
-        # Filter by warehouse through stock moves
         from app.models.operation import StockMove
         from app.models.warehouse import Location
-        query = query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
+        from sqlalchemy.orm import aliased
+        from sqlalchemy import or_
+        SourceLoc = aliased(Location)
+        DestLoc = aliased(Location)
+        query = (
+            query.join(StockMove, Operation.id == StockMove.operation_id)
+            .outerjoin(SourceLoc, StockMove.source_location_id == SourceLoc.id)
+            .outerjoin(DestLoc, StockMove.dest_location_id == DestLoc.id)
+            .filter(or_(SourceLoc.warehouse_id == warehouse_id, DestLoc.warehouse_id == warehouse_id))
+        )
+    return query
+
+
+def _count(db, op_type, status, warehouse_id=None, date_from=None, date_to=None):
+    query = (
+        db.query(func.count(func.distinct(Operation.id)))
+        .filter(Operation.type == op_type, Operation.status == status)
+    )
+    query = _apply_warehouse_filter(query, warehouse_id)
     
     if date_from:
         query = query.filter(Operation.created_at >= date_from)
@@ -37,18 +49,14 @@ def _count_late(db, op_type, warehouse_id=None, date_from=None, date_to=None):
     """Operations that are Waiting or Ready but past their scheduled_date."""
     now = datetime.now(timezone.utc)
     query = (
-        db.query(func.count(Operation.id))
+        db.query(func.count(func.distinct(Operation.id)))
         .filter(
             Operation.type == op_type,
             Operation.status.in_([OperationStatus.waiting, OperationStatus.ready]),
             Operation.scheduled_date < now,
         )
     )
-    
-    if warehouse_id:
-        from app.models.operation import StockMove
-        from app.models.warehouse import Location
-        query = query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
+    query = _apply_warehouse_filter(query, warehouse_id)
     
     if date_from:
         query = query.filter(Operation.created_at >= date_from)
@@ -60,14 +68,10 @@ def _count_late(db, op_type, warehouse_id=None, date_from=None, date_to=None):
 
 def _total(db, op_type, warehouse_id=None, date_from=None, date_to=None):
     query = (
-        db.query(func.count(Operation.id))
+        db.query(func.count(func.distinct(Operation.id)))
         .filter(Operation.type == op_type)
     )
-    
-    if warehouse_id:
-        from app.models.operation import StockMove
-        from app.models.warehouse import Location
-        query = query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
+    query = _apply_warehouse_filter(query, warehouse_id)
     
     if date_from:
         query = query.filter(Operation.created_at >= date_from)
@@ -112,15 +116,12 @@ def get_stats(
     total_products = db.query(func.count(Product.id)).scalar() or 0
     
     # Build base query for total operations
-    total_query = db.query(func.count(Operation.id))
-    ready_query = db.query(func.count(Operation.id)).filter(Operation.status == OperationStatus.ready)
+    total_query = db.query(func.count(func.distinct(Operation.id)))
+    ready_query = db.query(func.count(func.distinct(Operation.id))).filter(Operation.status == OperationStatus.ready)
     
     # Apply filters to base queries
-    if warehouse_id:
-        from app.models.operation import StockMove
-        from app.models.warehouse import Location
-        total_query = total_query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
-        ready_query = ready_query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
+    total_query = _apply_warehouse_filter(total_query, warehouse_id)
+    ready_query = _apply_warehouse_filter(ready_query, warehouse_id)
     
     if status:
         try:
@@ -181,20 +182,11 @@ def get_recent_operations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get recent operations with filtering support"""
-    from app.models.operation import StockMove
-    from app.models.warehouse import Location
-    
-    # Parse date range if provided
-    if date_range and not date_from and not date_to:
-        date_from, date_to = _parse_date_range(date_range)
-    
     # Build query
     query = db.query(Operation)
-    
-    # Apply filters
+    query = _apply_warehouse_filter(query, warehouse_id)
     if warehouse_id:
-        query = query.join(StockMove).join(Location, StockMove.source_location_id == Location.id).filter(Location.warehouse_id == warehouse_id)
+        query = query.distinct()
     
     if status:
         try:

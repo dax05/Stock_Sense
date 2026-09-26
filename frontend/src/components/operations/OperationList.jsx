@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, Plus, List, LayoutGrid, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import StatusBadge from "../ui/StatusBadge";
 import Modal from "../ui/Modal";
 import OperationForm from "./OperationForm";
+import api from "../../lib/api";
 
 const STATUSES = ["Draft", "Waiting", "Ready", "Done", "Canceled"];
 
@@ -21,6 +22,21 @@ export default function OperationList({ title, opType, operations, loading, prod
     const [selected, setSelected] = useState(null); // existing op
     const [creating, setCreating] = useState(false);
 
+    // Load warehouses + locations once
+    const [warehouses, setWarehouses] = useState([]);
+    const [locations, setLocations] = useState([]);
+
+    useEffect(() => {
+        Promise.all([api.get("/warehouses/"), api.get("/locations/")])
+            .then(([wRes, lRes]) => {
+                setWarehouses(wRes.data);
+                setLocations(lRes.data);
+            })
+            .catch(() => {
+                // silently keep empty — form will show "no warehouses" message
+            });
+    }, []);
+
     const filtered = operations.filter((op) => {
         const q = search.toLowerCase();
         return (
@@ -29,7 +45,7 @@ export default function OperationList({ title, opType, operations, loading, prod
         );
     });
 
-    function handleSaved(op) {
+    function handleSaved() {
         setCreating(false);
         setSelected(null);
         onRefetch();
@@ -84,9 +100,9 @@ export default function OperationList({ title, opType, operations, loading, prod
                     <Loader2 size={20} className="animate-spin" /> Loading…
                 </div>
             ) : view === "list" ? (
-                <ListView ops={filtered} srcLabel={srcLabel} dstLabel={dstLabel} onSelect={setSelected} />
+                <ListView ops={filtered} locations={locations} opType={opType} onSelect={setSelected} />
             ) : (
-                <KanbanView ops={filtered} srcLabel={srcLabel} dstLabel={dstLabel} onSelect={setSelected} />
+                <KanbanView ops={filtered} onSelect={setSelected} />
             )}
 
             {/* Create modal */}
@@ -95,6 +111,8 @@ export default function OperationList({ title, opType, operations, loading, prod
                     operation={null}
                     products={products}
                     opType={opType}
+                    locations={locations}
+                    warehouses={warehouses}
                     onSaved={handleSaved}
                     onClose={() => setCreating(false)}
                 />
@@ -112,6 +130,8 @@ export default function OperationList({ title, opType, operations, loading, prod
                         operation={selected}
                         products={products}
                         opType={opType}
+                        locations={locations}
+                        warehouses={warehouses}
                         onSaved={handleSaved}
                         onClose={() => setSelected(null)}
                     />
@@ -123,8 +143,21 @@ export default function OperationList({ title, opType, operations, loading, prod
 
 // ── List View ─────────────────────────────────────────────────────────────
 
-function ListView({ ops, srcLabel, dstLabel, onSelect }) {
+function ListView({ ops, locations, opType, onSelect }) {
     if (!ops.length) return <EmptyState />;
+
+    // Build a quick lookup for location names
+    const locMap = Object.fromEntries(locations.map((l) => [l.id, l.name]));
+
+    function getSrcDst(op) {
+        if (!op.stock_moves?.length) return { src: "—", dst: "—" };
+        // Use first move's locations
+        const move = op.stock_moves[0];
+        return {
+            src: locMap[move.source_location_id] || `Loc #${move.source_location_id}`,
+            dst: locMap[move.dest_location_id] || `Loc #${move.dest_location_id}`,
+        };
+    }
 
     return (
         <div className="card overflow-hidden">
@@ -137,20 +170,23 @@ function ListView({ ops, srcLabel, dstLabel, onSelect }) {
                     </tr>
                 </thead>
                 <tbody>
-                    {ops.map((op) => (
-                        <tr
-                            key={op.id}
-                            onClick={() => onSelect(op)}
-                            className="cursor-pointer"
-                        >
-                            <td className="font-mono text-xs font-semibold text-primary">{op.reference}</td>
-                            <td>{srcLabel}</td>
-                            <td>{dstLabel}</td>
-                            <td>{op.partner_name || "—"}</td>
-                            <td className="text-slate-500">{formatDate(op.scheduled_date)}</td>
-                            <td><StatusBadge status={op.status} /></td>
-                        </tr>
-                    ))}
+                    {ops.map((op) => {
+                        const { src, dst } = getSrcDst(op);
+                        return (
+                            <tr
+                                key={op.id}
+                                onClick={() => onSelect(op)}
+                                className="cursor-pointer"
+                            >
+                                <td className="font-mono text-xs font-semibold text-primary">{op.reference}</td>
+                                <td className="text-xs text-slate-600">{src}</td>
+                                <td className="text-xs text-slate-600">{dst}</td>
+                                <td>{op.partner_name || "—"}</td>
+                                <td className="text-slate-500">{formatDate(op.scheduled_date)}</td>
+                                <td><StatusBadge status={op.status} /></td>
+                            </tr>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
