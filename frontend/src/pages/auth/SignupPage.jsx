@@ -64,7 +64,7 @@ export default function SignupPage() {
     return (
         <AuthShell>
             <h2 className="text-xl font-semibold text-slate-900 mb-2">Create an account</h2>
-            <p className="text-sm text-slate-600 mb-6">Get started with CoreInventory</p>
+            <p className="text-sm text-slate-600 mb-6">Get started with Stock Sense</p>
 
             {apiError && (
                 <div className="alert-error mb-4">

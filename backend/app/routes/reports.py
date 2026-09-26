@@ -55,5 +55,5 @@ def export_products(db: Session = Depends(get_db), _: User = Depends(get_current
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=coreinventory_products.csv"},
+        headers={"Content-Disposition": "attachment; filename=stocksense_products.csv"},
     )

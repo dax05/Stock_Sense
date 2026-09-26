@@ -68,7 +68,7 @@ export default function Sidebar() {
                 </div>
                 {/* Brand Name */}
                 <div className="leading-tight">
-                    <div className="text-base font-bold text-slate-900 tracking-tight">CoreInventory</div>
+                    <div className="text-base font-bold text-slate-900 tracking-tight">Stock Sense</div>
                     <div className="text-xs text-slate-500 font-medium">Professional Management</div>
                 </div>
             </div>

@@ -13,7 +13,7 @@ Base.metadata.create_all(bind=engine)
 # ── Import routers AFTER models are registered ─────────────────────────
 from app.routes import auth, operations, products, stats, warehouses, stock_moves, categories, reports  # noqa: E402
 
-app = FastAPI(title="CoreInventory API", version="1.0.0")
+app = FastAPI(title="Stock Sense API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,4 +49,4 @@ def ping():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "CoreInventory API"}
+    return {"status": "ok", "service": "Stock Sense API"}

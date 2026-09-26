@@ -43,7 +43,7 @@ export default function LoginPage() {
     return (
         <AuthShell>
             <h2 className="text-xl font-semibold text-slate-900 mb-2">Welcome back</h2>
-            <p className="text-sm text-slate-600 mb-6">Sign in to your CoreInventory account</p>
+            <p className="text-sm text-slate-600 mb-6">Sign in to your Stock Sense account</p>
 
             {successMsg && (
                 <div className="alert-success mb-4">
@@ -87,6 +87,15 @@ export default function LoginPage() {
                     </div>
                 </Field>
 
+                <div className="flex justify-end">
+                    <Link
+                        to="/forgot-password"
+                        className="text-xs text-primary hover:underline"
+                    >
+                        Forgot password?
+                    </Link>
+                </div>
+
                 <button type="submit" className="btn-primary w-full" disabled={loading}>
                     {loading ? <Loader2 size={16} className="animate-spin" /> : "Sign In"}
                 </button>
@@ -119,7 +128,7 @@ export function AuthShell({ children }) {
                         </svg>
                     </div>
                     <div className="text-center">
-                        <h1 className="text-xl font-bold text-slate-900 tracking-tight">CoreInventory</h1>
+                        <h1 className="text-xl font-bold text-slate-900 tracking-tight">Stock Sense</h1>
                         <p className="text-sm text-slate-600 mt-1">Professional Inventory Management</p>
                     </div>
                 </div>

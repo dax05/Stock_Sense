@@ -88,7 +88,7 @@ export default function ProductsPage() {
             const response = await api.get("/reports/products/export", { responseType: "blob" });
             const url = URL.createObjectURL(new Blob([response.data]));
             const a = document.createElement("a");
-            a.href = url; a.download = "coreinventory_products.csv"; a.click();
+            a.href = url; a.download = "stocksense_products.csv"; a.click();
             URL.revokeObjectURL(url);
         } catch {
             // fallback: client-side CSV from current data
@@ -97,7 +97,7 @@ export default function ProductsPage() {
             const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
             const a = document.createElement("a");
             a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-            a.download = "coreinventory_products.csv"; a.click();
+            a.download = "stocksense_products.csv"; a.click();
         }
     }
 

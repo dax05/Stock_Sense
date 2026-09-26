@@ -16,7 +16,7 @@ from app.config import settings
 def cleanup_users_table():
     """Truncate the users table to remove any corrupted password hashes"""
     
-    print("🧹 CoreInventory Database Cleanup")
+    print("🧹 Stock Sense Database Cleanup")
     print("=" * 50)
     print(f"Database: {settings.DATABASE_URL.split('@')[-1]}")  # Hide credentials
     print()

@@ -1,6 +1,6 @@
-# 📦 CoreInventory - Advanced Inventory Management System
+# 📦 Stock Sense - Advanced Inventory Management System
 
-A full-stack inventory management system built with **FastAPI** (Python) backend and **React** (Vite) frontend. CoreInventory provides comprehensive tools for managing products, warehouses, stock movements, and operations with real-time tracking and reporting capabilities.
+A full-stack inventory management system built with **FastAPI** (Python) backend and **React** (Vite) frontend. Stock Sense provides comprehensive tools for managing products, warehouses, stock movements, and operations with real-time tracking and reporting capabilities.
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?logo=fastapi)
@@ -65,7 +65,7 @@ A full-stack inventory management system built with **FastAPI** (Python) backend
 ## 📁 Project Structure
 
 ```
-Inventory-System-main/
+Stock_Sense/
 ├── backend/
 │   ├── alembic/                 # Database migrations
 │   ├── app/
@@ -135,13 +135,13 @@ Inventory-System-main/
 
 2. **Create the database**:
 ```sql
-CREATE DATABASE coreinventory;
+CREATE DATABASE stocksense;
 ```
 
 3. **Create a PostgreSQL user** (if needed):
 ```sql
 CREATE USER postgres WITH PASSWORD 'Hack123';
-GRANT ALL PRIVILEGES ON DATABASE coreinventory TO postgres;
+GRANT ALL PRIVILEGES ON DATABASE stocksense TO postgres;
 ```
 
 ### Backend Setup
@@ -153,7 +153,7 @@ cd backend
 
 2. **Create and configure `.env` file**:
 ```env
-DATABASE_URL=postgresql://postgres:Hack123@localhost:5432/coreinventory
+DATABASE_URL=postgresql://postgres:Hack123@localhost:5432/stocksense
 SECRET_KEY=MjpXUlshGQk3VtBIn_eYbaEbbQ-dX6KoslRmp9y7Qpg
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60

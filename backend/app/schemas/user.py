@@ -32,3 +32,43 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     login_id: str
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp_code: str
+    
+    @field_validator("otp_code")
+    @classmethod
+    def validate_otp(cls, v: str) -> str:
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError("OTP must be a 6-digit number")
+        return v
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp_code: str
+    new_password: str
+    
+    @field_validator("otp_code")
+    @classmethod
+    def validate_otp(cls, v: str) -> str:
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError("OTP must be a 6-digit number")
+        return v
+    
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters long")
+        return v
+
+
+class MessageResponse(BaseModel):
+    message: str

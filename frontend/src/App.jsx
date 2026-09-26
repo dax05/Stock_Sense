@@ -6,6 +6,7 @@ import { testConnectivity } from "./lib/api";
 import AppLayout from "./components/layout/AppLayout";
 import LoginPage from "./pages/auth/LoginPage";
 import SignupPage from "./pages/auth/SignupPage";
+import ForgotPasswordPage from "./pages/auth/ForgotPasswordPage";
 import DashboardPage from "./pages/dashboard/DashboardPage";
 import ReceiptsPage from "./pages/operations/ReceiptsPage";
 import DeliveriesPage from "./pages/operations/DeliveriesPage";
@@ -40,6 +41,7 @@ export default function App() {
           {/* Public */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
           {/* Protected */}
           <Route element={<AppLayout />}>
